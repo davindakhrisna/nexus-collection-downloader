@@ -1,6 +1,6 @@
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Windows.Forms;
 
 namespace NexusCollectionDownloader;
@@ -17,24 +17,22 @@ internal static class Program
 
 internal sealed class MainForm : Form
 {
-    private readonly TextBox vortexPath = new() { ReadOnly = true, Dock = DockStyle.Fill };
-    private readonly TextBox browserPath = new() { ReadOnly = true, Dock = DockStyle.Fill };
-    private readonly TextBox closePath = new() { ReadOnly = true, Dock = DockStyle.Fill };
+    private readonly TextBox imageFolder = new() { ReadOnly = true, Dock = DockStyle.Fill };
     private readonly NumericUpDown fixedSeconds = Seconds(1.0m);
     private readonly NumericUpDown minimumSeconds = Seconds(1.0m);
     private readonly NumericUpDown maximumSeconds = Seconds(2.0m);
-    private readonly NumericUpDown closeSeconds = Seconds(5.2m);
+    private readonly NumericUpDown closeSeconds = Seconds(5.0m);
     private readonly CheckBox randomTiming = new() { Text = "Random interval", AutoSize = true };
     private readonly Button startButton = new() { Text = "Start", Width = 120, Height = 36 };
     private readonly Button stopButton = new() { Text = "Stop", Width = 120, Height = 36, Enabled = false };
-    private readonly Label status = new() { Text = "Ready. Select all three images to begin.", AutoSize = true };
+    private readonly Label status = new() { Text = "Ready. Select a folder of Download button images.", AutoSize = true };
     private CancellationTokenSource? runCancellation;
 
     public MainForm()
     {
         Text = "Nexus Collection Downloader";
-        ClientSize = new Size(720, 550);
-        MinimumSize = new Size(650, 550);
+        ClientSize = new Size(720, 480);
+        MinimumSize = new Size(650, 480);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9.5f);
         BackColor = Color.FromArgb(248, 249, 251);
@@ -43,7 +41,7 @@ internal sealed class MainForm : Form
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 6 };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 95));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 146));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -56,19 +54,26 @@ internal sealed class MainForm : Form
         }, 0, 0);
         root.Controls.Add(new Label
         {
-            Text = "Select cropped images from your current screen. The app clicks Vortex, then the browser Download button, then closes that browser window.",
+            Text = "Choose a folder of Download button crops. The app clicks Vortex, then the browser, then forcefully ends that browser process.",
             Dock = DockStyle.Fill, AutoSize = false
         }, 0, 1);
 
-        var files = new GroupBox { Text = "Button images", Dock = DockStyle.Fill, Padding = new Padding(12, 17, 12, 10) };
-        var fileGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3 };
+        var files = new GroupBox { Text = "Download button images", Dock = DockStyle.Fill, Padding = new Padding(12, 17, 12, 10) };
+        var fileGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
         fileGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
         fileGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         fileGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
-        for (var i = 0; i < 3; i++) fileGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33f));
-        AddFileRow(fileGrid, 0, "Vortex Download", vortexPath);
-        AddFileRow(fileGrid, 1, "Browser Download", browserPath);
-        AddFileRow(fileGrid, 2, "Browser Close", closePath);
+        fileGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        fileGrid.Controls.Add(Label("Image folder"), 0, 0);
+        imageFolder.Margin = new Padding(3, 7, 3, 7);
+        fileGrid.Controls.Add(imageFolder, 1, 0);
+        var browse = new Button { Text = "Browse…", Dock = DockStyle.Fill, Margin = new Padding(6, 5, 0, 5) };
+        browse.Click += (_, _) =>
+        {
+            using var dialog = new FolderBrowserDialog { Description = "Choose a folder containing Download button images" };
+            if (dialog.ShowDialog(this) == DialogResult.OK) imageFolder.Text = dialog.SelectedPath;
+        };
+        fileGrid.Controls.Add(browse, 2, 0);
         files.Controls.Add(fileGrid);
         root.Controls.Add(files, 0, 2);
 
@@ -86,9 +91,9 @@ internal sealed class MainForm : Form
         timingGrid.Controls.Add(minimumSeconds, 1, 1);
         timingGrid.Controls.Add(Label("Maximum"), 2, 1);
         timingGrid.Controls.Add(maximumSeconds, 3, 1);
-        timingGrid.Controls.Add(Label("Browser close delay"), 0, 2);
+        timingGrid.Controls.Add(Label("Browser kill delay"), 0, 2);
         timingGrid.Controls.Add(closeSeconds, 1, 2);
-        timingGrid.Controls.Add(new Label { Text = "Default: 5.2 s after browser Download", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.DimGray }, 2, 2);
+        timingGrid.Controls.Add(new Label { Text = "Default: 5.0 s after browser Download", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.DimGray }, 2, 2);
         timingGrid.SetColumnSpan(timingGrid.GetControlFromPosition(2, 2)!, 2);
         timing.Controls.Add(timingGrid);
         root.Controls.Add(timing, 0, 3);
@@ -123,23 +128,6 @@ internal sealed class MainForm : Form
         Value = value, Dock = DockStyle.Fill, TextAlign = HorizontalAlignment.Right
     };
 
-    private static void AddFileRow(TableLayoutPanel grid, int row, string title, TextBox path)
-    {
-        grid.Controls.Add(Label(title), 0, row);
-        path.Margin = new Padding(3, 7, 3, 7);
-        grid.Controls.Add(path, 1, row);
-        var browse = new Button { Text = "Browse…", Dock = DockStyle.Fill, Margin = new Padding(6, 5, 0, 5) };
-        browse.Click += (_, _) =>
-        {
-            using var dialog = new OpenFileDialog
-            {
-                Title = $"Choose {title} image", Filter = "Image files|*.png;*.bmp;*.jpg;*.jpeg|All files|*.*"
-            };
-            if (dialog.ShowDialog() == DialogResult.OK) path.Text = dialog.FileName;
-        };
-        grid.Controls.Add(browse, 2, row);
-    }
-
     private void UpdateTimingFields()
     {
         fixedSeconds.Enabled = !randomTiming.Checked;
@@ -155,16 +143,20 @@ internal sealed class MainForm : Form
             return;
         }
 
-        ImageTemplate? vortex = null, browser = null, close = null;
+        var images = new List<ImageTemplate>();
         try
         {
-            vortex = ImageTemplate.Load(vortexPath.Text, "Vortex Download");
-            browser = ImageTemplate.Load(browserPath.Text, "Browser Download");
-            close = ImageTemplate.Load(closePath.Text, "Browser Close");
+            if (!Directory.Exists(imageFolder.Text))
+                throw new InvalidOperationException("Choose a folder containing Download button images.");
+            foreach (var path in Directory.EnumerateFiles(imageFolder.Text).Where(path =>
+                         new[] { ".png", ".bmp", ".jpg", ".jpeg" }.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)))
+                images.Add(ImageTemplate.Load(path));
+            if (images.Count == 0)
+                throw new InvalidOperationException("The selected folder has no PNG, BMP, or JPEG images.");
         }
         catch (Exception ex)
         {
-            vortex?.Dispose(); browser?.Dispose(); close?.Dispose();
+            foreach (var image in images) image.Dispose();
             MessageBox.Show(this, ex.Message, "Check images", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
@@ -172,14 +164,14 @@ internal sealed class MainForm : Form
         runCancellation = new CancellationTokenSource();
         startButton.Enabled = false;
         stopButton.Enabled = true;
-        status.Text = "Running. Restore this window from the taskbar to stop.";
+        status.Text = $"Running with {images.Count} images. Restore this window from the taskbar to stop.";
         WindowState = FormWindowState.Minimized;
 
         try
         {
             var options = new RunOptions((double)fixedSeconds.Value, (double)minimumSeconds.Value,
                 (double)maximumSeconds.Value, randomTiming.Checked, (double)closeSeconds.Value);
-            await Task.Run(() => RunAsync(vortex!, browser!, close!, options, runCancellation.Token));
+            await Task.Run(() => RunAsync(images, options, runCancellation.Token));
             status.Text = "Stopped.";
         }
         catch (OperationCanceledException)
@@ -194,7 +186,7 @@ internal sealed class MainForm : Form
         }
         finally
         {
-            vortex?.Dispose(); browser?.Dispose(); close?.Dispose();
+            foreach (var image in images) image.Dispose();
             runCancellation.Dispose();
             runCancellation = null;
             startButton.Enabled = true;
@@ -202,20 +194,20 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task RunAsync(ImageTemplate vortex, ImageTemplate browser, ImageTemplate close, RunOptions options, CancellationToken token)
+    private async Task RunAsync(IReadOnlyList<ImageTemplate> images, RunOptions options, CancellationToken token)
     {
         while (true)
         {
             token.ThrowIfCancellationRequested();
-            var browserHit = ScreenMatcher.Find(browser);
+            var browserHit = ScreenMatcher.Find(images, WindowKind.Browser);
             if (browserHit is not null)
             {
-                await HandleBrowserAsync(browserHit.Value, close, options, token);
+                await HandleBrowserAsync(browserHit.Value, options, token);
                 await DelayClickAsync(options, token);
                 continue;
             }
 
-            var vortexHit = ScreenMatcher.Find(vortex);
+            var vortexHit = ScreenMatcher.Find(images, WindowKind.Vortex);
             if (vortexHit is null)
             {
                 Report("Waiting for Vortex Download…");
@@ -230,47 +222,34 @@ internal sealed class MainForm : Form
             while (true)
             {
                 token.ThrowIfCancellationRequested();
-                browserHit = ScreenMatcher.Find(browser);
+                browserHit = ScreenMatcher.Find(images, WindowKind.Browser);
                 if (browserHit is not null) break;
                 if (DateTime.UtcNow >= deadline)
-                    throw new InvalidOperationException("Browser Download was not found within 60 seconds. Check its image and window visibility.");
+                    throw new InvalidOperationException("Browser Download was not found within 60 seconds. Check the image folder and window visibility.");
                 await Task.Delay(300, token);
             }
-            await HandleBrowserAsync(browserHit.Value, close, options, token);
+            await HandleBrowserAsync(browserHit.Value, options, token);
             await DelayClickAsync(options, token);
         }
     }
 
-    private async Task HandleBrowserAsync(ScreenHit hit, ImageTemplate close, RunOptions options, CancellationToken token)
+    private async Task HandleBrowserAsync(ScreenHit hit, RunOptions options, CancellationToken token)
     {
-        Report("Clicked browser Download; waiting to close its window…");
+        using var browser = Process.GetProcessById(hit.ProcessId);
+        if (!ScreenMatcher.IsBrowserProcess(browser.ProcessName))
+            throw new InvalidOperationException("The matched window is not a supported browser.");
+        Report($"Clicked browser Download; ending {browser.ProcessName} in {options.CloseDelay:0.0} seconds…");
+        var clickedAt = Stopwatch.GetTimestamp();
         ScreenMatcher.Click(hit.Point);
-        await Task.Delay(TimeSpan.FromSeconds(options.CloseDelay), token);
-        if (!ScreenMatcher.IsWindowOpen(hit.Window))
-        {
-            Report("Browser window already closed.");
-            return;
-        }
-
-        var deadline = DateTime.UtcNow.AddSeconds(3);
-        while (true)
-        {
-            token.ThrowIfCancellationRequested();
-            if (!ScreenMatcher.IsWindowOpen(hit.Window)) return;
-            var closeHit = ScreenMatcher.Find(close, hit.Window);
-            if (closeHit is not null)
-            {
-                ScreenMatcher.Click(closeHit.Value.Point);
-                await Task.Delay(800, token);
-                if (ScreenMatcher.IsWindowOpen(hit.Window))
-                    throw new InvalidOperationException("The browser window stayed open after clicking Close. Close it manually before restarting.");
-                Report("Browser window closed. Waiting for the next Vortex button…");
-                return;
-            }
-            if (DateTime.UtcNow >= deadline)
-                throw new InvalidOperationException("Browser Close image was not found in the same window. Close it manually and check the image.");
-            await Task.Delay(150, token);
-        }
+        var remaining = TimeSpan.FromSeconds(options.CloseDelay) - Stopwatch.GetElapsedTime(clickedAt);
+        if (remaining > TimeSpan.Zero) await Task.Delay(remaining, token);
+        token.ThrowIfCancellationRequested();
+        if (browser.HasExited)
+            throw new InvalidOperationException("The matched browser process ended before cleanup. Check whether the download started.");
+        browser.Kill(entireProcessTree: true);
+        if (!browser.WaitForExit(5000))
+            throw new InvalidOperationException("The browser process did not exit after termination.");
+        Report("Browser process ended. Waiting for the next Vortex button…");
     }
 
     private static Task DelayClickAsync(RunOptions options, CancellationToken token)
@@ -292,16 +271,21 @@ internal readonly record struct RunOptions(double Fixed, double Minimum, double 
 internal sealed class ImageTemplate : IDisposable
 {
     public Bitmap Bitmap { get; }
+    public int[] Pixels { get; }
+    public int Stride { get; }
 
-    private ImageTemplate(Bitmap bitmap) => Bitmap = bitmap;
-
-    public static ImageTemplate Load(string path, string title)
+    private ImageTemplate(Bitmap bitmap)
     {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-            throw new InvalidOperationException($"Choose an image for {title}.");
+        Bitmap = bitmap;
+        Pixels = ScreenMatcher.CopyPixels(bitmap, out var stride);
+        Stride = stride;
+    }
+
+    public static ImageTemplate Load(string path)
+    {
         using var source = new Bitmap(path);
         if (source.Width < 8 || source.Height < 8 || source.Width > 600 || source.Height > 300)
-            throw new InvalidOperationException($"{title} image should be a tight crop between 8×8 and 600×300 pixels.");
+            throw new InvalidOperationException($"{Path.GetFileName(path)} must be a tight crop between 8×8 and 600×300 pixels.");
         var bitmap = new Bitmap(source.Width, source.Height, PixelFormat.Format32bppArgb);
         using (var graphics = Graphics.FromImage(bitmap)) graphics.DrawImage(source, 0, 0, source.Width, source.Height);
         return new ImageTemplate(bitmap);

@@ -6,11 +6,11 @@ A Windows click assistant for Vortex and Nexus Mods collection download prompts.
 
 ## Use
 
-1. Select screenshots of the Vortex Download button, browser Download button, and browser window Close button. Use tight PNG crops at your current display scale.
-2. Set a fixed or random click interval and the browser close delay. The default close delay is 5.2 seconds.
+1. Put cropped Download button images for Vortex and your browser in one folder, then select that folder. Use PNG crops at your current display scale.
+2. Set a fixed or random click interval and the browser kill delay. The default kill delay is 5.0 seconds.
 3. Keep both windows visible and press Start. Restore the app from the taskbar to press Stop.
 
-The app pauses if it cannot find the browser Download or Close button. It moves the mouse while clicking.
+The app pauses if it cannot find the browser Download button. After clicking it, the app forcefully terminates the matched browser process, which may close other windows and tabs in that browser. It moves the mouse while clicking. Supported browsers include Chrome, Edge, Firefox, Brave, Opera, Vivaldi, and Chromium.
 
 ## Build
 

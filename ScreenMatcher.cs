@@ -1,51 +1,70 @@
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace NexusCollectionDownloader;
 
-internal readonly record struct ScreenHit(Point Point, nint Window);
+internal enum WindowKind { Vortex, Browser }
+internal readonly record struct ScreenHit(Point Point, int ProcessId);
 
 internal static class ScreenMatcher
 {
     private const uint MouseLeftDown = 0x0002;
     private const uint MouseLeftUp = 0x0004;
     private const uint RootWindow = 2;
-
-    public static ScreenHit? Find(ImageTemplate template, nint requiredWindow = 0)
+    private static readonly HashSet<string> BrowserNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        Rectangle? windowBounds = null;
-        if (requiredWindow != 0)
-        {
-            if (!IsWindowOpen(requiredWindow) || !GetWindowRect(requiredWindow, out var rect)) return null;
-            windowBounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
-        }
+        "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "chromium",
+        "waterfox", "librewolf", "floorp", "zen", "arc"
+    };
 
+    public static bool IsBrowserProcess(string name) => BrowserNames.Contains(name);
+
+    public static ScreenHit? Find(IReadOnlyList<ImageTemplate> templates, WindowKind kind)
+    {
         foreach (var display in Screen.AllScreens)
         {
-            var bounds = windowBounds is null ? display.Bounds : Rectangle.Intersect(display.Bounds, windowBounds.Value);
-            if (bounds.Width < template.Bitmap.Width || bounds.Height < template.Bitmap.Height) continue;
-
+            var bounds = display.Bounds;
             using var shot = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
             using (var graphics = Graphics.FromImage(shot))
                 graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
-
-            var point = Match(shot, template.Bitmap, candidate =>
+            var pixels = CopyPixels(shot, out var stride);
+            foreach (var template in templates)
             {
-                if (requiredWindow == 0) return true;
-                var absolute = new Point(bounds.Left + candidate.X + template.Bitmap.Width / 2,
-                    bounds.Top + candidate.Y + template.Bitmap.Height / 2);
-                return GetAncestor(WindowFromPoint(absolute), RootWindow) == requiredWindow;
-            });
-            if (point is null) continue;
-
-            var absolute = new Point(bounds.Left + point.Value.X + template.Bitmap.Width / 2,
-                bounds.Top + point.Value.Y + template.Bitmap.Height / 2);
-            var window = GetAncestor(WindowFromPoint(absolute), RootWindow);
-            return new ScreenHit(absolute, window);
+                if (bounds.Width < template.Bitmap.Width || bounds.Height < template.Bitmap.Height) continue;
+                ScreenHit? hit = null;
+                Match(pixels, stride, bounds.Width, bounds.Height, template, candidate =>
+                {
+                    var absolute = new Point(bounds.Left + candidate.X + template.Bitmap.Width / 2,
+                        bounds.Top + candidate.Y + template.Bitmap.Height / 2);
+                    var window = GetAncestor(WindowFromPoint(absolute), RootWindow);
+                    if (window == 0) return false;
+                    GetWindowThreadProcessId(window, out var processId);
+                    if (!IsTargetProcess(processId, kind)) return false;
+                    hit = new ScreenHit(absolute, (int)processId);
+                    return true;
+                });
+                if (hit is not null) return hit;
+            }
         }
         return null;
+    }
+
+    private static bool IsTargetProcess(uint processId, WindowKind kind)
+    {
+        if (processId == 0) return false;
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            return kind == WindowKind.Vortex
+                ? process.ProcessName.Equals("Vortex", StringComparison.OrdinalIgnoreCase)
+                : IsBrowserProcess(process.ProcessName);
+        }
+        catch (ArgumentException) { return false; }
+        catch (InvalidOperationException) { return false; }
+        catch (System.ComponentModel.Win32Exception) { return false; }
     }
 
     public static void Click(Point point)
@@ -57,14 +76,13 @@ internal static class ScreenMatcher
         mouse_event(MouseLeftUp, 0, 0, 0, 0);
     }
 
-    public static bool IsWindowOpen(nint window) => window != 0 && IsWindow(window);
-
-    private static Point? Match(Bitmap screen, Bitmap template, Func<Point, bool> accepts)
+    private static Point? Match(int[] pixels, int screenStride, int screenWidth, int screenHeight,
+        ImageTemplate template, Func<Point, bool> accepts)
     {
-        var pixels = CopyPixels(screen, out var screenStride);
-        var target = CopyPixels(template, out var targetStride);
-        var width = template.Width;
-        var height = template.Height;
+        var target = template.Pixels;
+        var targetStride = template.Stride;
+        var width = template.Bitmap.Width;
+        var height = template.Bitmap.Height;
         var anchors = new (int X, int Y)[]
         {
             (width / 2, height / 2), (width / 4, height / 4),
@@ -72,8 +90,8 @@ internal static class ScreenMatcher
             (width * 3 / 4, height * 3 / 4)
         };
 
-        for (var y = 0; y <= screen.Height - height; y++)
-        for (var x = 0; x <= screen.Width - width; x++)
+        for (var y = 0; y <= screenHeight - height; y++)
+        for (var x = 0; x <= screenWidth - width; x++)
         {
             var start = y * screenStride + x;
             var anchored = true;
@@ -101,7 +119,7 @@ internal static class ScreenMatcher
         return null;
     }
 
-    private static int[] CopyPixels(Bitmap bitmap, out int stride)
+    internal static int[] CopyPixels(Bitmap bitmap, out int stride)
     {
         var data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height),
             ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
@@ -120,17 +138,12 @@ internal static class ScreenMatcher
         Math.Abs(((a >> 8) & 255) - ((b >> 8) & 255)) <= 28 &&
         Math.Abs(((a >> 16) & 255) - ((b >> 16) & 255)) <= 28;
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeRect { public int Left, Top, Right, Bottom; }
-
     [DllImport("user32.dll")]
     private static extern nint WindowFromPoint(Point point);
     [DllImport("user32.dll")]
     private static extern nint GetAncestor(nint window, uint flags);
     [DllImport("user32.dll")]
-    private static extern bool GetWindowRect(nint window, out NativeRect rect);
-    [DllImport("user32.dll")]
-    private static extern bool IsWindow(nint window);
+    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")]
